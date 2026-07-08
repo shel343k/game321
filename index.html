@@ -1128,7 +1128,7 @@ function regen(e, dt){
 function levelForScore(score){
   const base=CONFIG.level.base, grow=CONFIG.level.grow;
   let lvl=1, need=base, acc=0;
-  while(score>=acc+need && lvl<80){ acc+=need; lvl++; need=Math.round(base*(1+(lvl-1)*grow)); }
+  while(score>=acc+need && lvl<999){ acc+=need; lvl++; need=Math.round(base*(1+(lvl-1)*grow)); }
   return lvl;
 }
 
