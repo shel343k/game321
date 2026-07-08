@@ -208,7 +208,7 @@
     <b>1 · 2 · 3</b> — выбор улучшения &nbsp;·&nbsp; <b>E</b> — способность &nbsp;·&nbsp; <b>R</b> — ультимейт &nbsp;·&nbsp; <b>M</b> — звук<br>
     <span style="opacity:.6">Чем больше энергии — тем ярче ты светишься и тем сильнее на тебя охотятся.</span><br>
     <span style="opacity:.85;font-size:10px">Сферы: ⚡энергия · 🔴урон · 🛡щит · 🔧ремонт · 🟣перегрузка · 🧲магнит · 🔺опыт · ★легенда</span><br>
-    <span style="opacity:.6;font-size:10px">Каждые 15 уровней — выбор улучшения из трёх. Свой дрон — синий контур, враги — красный.</span>
+    <span style="opacity:.6;font-size:10px">Каждые 15 уровней — выбор улучшения из трёх. Пролетай сквозь бирюзовые кольца — ускорение. Свой дрон — синий контур, враги — красный.</span>
   </div>
 </div>
 
@@ -263,6 +263,7 @@ const CONFIG = {
 let scene, camera, renderer, clock;
 let player, entities = [], projectiles = [], spheres = [], loot = [], fx = [];
 const obstacles = [];   // {type:'ellipsoid'|'cylinder'|'sphere', pos, ...}
+const rings = [];       // boost gates {mesh, glow, pos, normal, r, cd}
 let bndBox=null, bndFloor=null, bndCeil=null;   // boundary meshes (proximity-revealed)
 let state = "menu"; // menu | play | pause | end
 let timeLeft = CONFIG.matchSeconds;
@@ -283,9 +284,44 @@ function randPoint(pad=30){
   const w=CONFIG.world;
   return new V(rand(-w.hx+pad,w.hx-pad), rand(-w.hy+pad,w.hy-pad), rand(-w.hz+pad,w.hz-pad));
 }
+// a point right at (or poking beyond) a side wall
+function edgeScatter(pad){
+  const w=CONFIG.world, sign=Math.random()<0.5?-1:1, beyond=rand(-50,170);
+  const p=new V(rand(-w.hx+pad,w.hx-pad), rand(-w.hy+pad,w.hy-pad), rand(-w.hz+pad,w.hz-pad));
+  if(Math.random()<0.5) p.x=sign*(w.hx+beyond); else p.z=sign*(w.hz+beyond);
+  return p;
+}
+// spread across the whole map, with a chance to protrude from the edges
+function placePoint(pad, edgeChance){ return (Math.random()<(edgeChance||0)) ? edgeScatter(pad) : randPoint(pad); }
+/* spatial grid so collision checks touch only nearby colliders (hundreds now exist) */
+const GRID_CELL = 260;
+const EMPTY_ARR = [];
+const obGrid = new Map();
+function _gkey(ix,iy,iz){ return ix+","+iy+","+iz; }
+function obRadius(o){
+  return o.type==="sphere" ? o.r
+       : o.type==="cylinder" ? Math.max(o.r,o.halfH)
+       : Math.max(o.rx,o.ry,o.rz);
+}
+function buildObstacleGrid(){
+  obGrid.clear();
+  for(const o of obstacles){
+    const R=obRadius(o)+40;
+    const x0=Math.floor((o.pos.x-R)/GRID_CELL), x1=Math.floor((o.pos.x+R)/GRID_CELL);
+    const y0=Math.floor((o.pos.y-R)/GRID_CELL), y1=Math.floor((o.pos.y+R)/GRID_CELL);
+    const z0=Math.floor((o.pos.z-R)/GRID_CELL), z1=Math.floor((o.pos.z+R)/GRID_CELL);
+    for(let ix=x0;ix<=x1;ix++) for(let iy=y0;iy<=y1;iy++) for(let iz=z0;iz<=z1;iz++){
+      const k=_gkey(ix,iy,iz); let a=obGrid.get(k); if(!a){ a=[]; obGrid.set(k,a); } a.push(o);
+    }
+  }
+}
+function nearbyObstacles(p){
+  if(obGrid.size===0) return obstacles;
+  return obGrid.get(_gkey(Math.floor(p.x/GRID_CELL),Math.floor(p.y/GRID_CELL),Math.floor(p.z/GRID_CELL))) || EMPTY_ARR;
+}
 // is a point inside any obstacle (inflated by margin)?
 function insideObstacles(p, margin){
-  for(const o of obstacles){
+  for(const o of nearbyObstacles(p)){
     if(o.type==="sphere"){ if(p.distanceTo(o.pos) < o.r+margin) return true; }
     else if(o.type==="cylinder"){
       const hx=p.x-o.pos.x, hz=p.z-o.pos.z;
@@ -328,7 +364,7 @@ function pointHard(){
 // push an entity out of any obstacle it overlaps (collider matches the object's shape)
 function resolveObstacles(e){
   const er=e.radius;
-  for(const o of obstacles){
+  for(const o of nearbyObstacles(e.pos)){
     if(o.type==="sphere"){
       obN.subVectors(e.pos,o.pos); let d=obN.length(); const min=o.r+er;
       if(d<min){ if(d<1e-4){ obN.set(0,1,0); d=1; } obN.multiplyScalar(1/d);
@@ -500,7 +536,7 @@ function texNebula(){
 function initScene(){
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x9fd0ef);              // bright sky blue
-  scene.fog = new THREE.Fog(0xbfe0f0, 1000, 4200);          // airy blue haze, deeper for a big map
+  scene.fog = new THREE.Fog(0xbfe0f0, 1100, 5200);          // airy blue haze, deeper for a big map
 
   camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.5, 9000);
 
@@ -518,6 +554,7 @@ function initScene(){
   const fill = new THREE.DirectionalLight(0xbfe0ff, 0.45); fill.position.set(-0.4,0.2,-0.7); scene.add(fill);
 
   buildEnvironment();
+  buildObstacleGrid();   // broadphase for the now-large collider set
   clock = new THREE.Clock();
   addEventListener("resize", onResize);
 }
@@ -537,7 +574,7 @@ function buildEnvironment(){
   sgrad.addColorStop(0,"#3f7fc4"); sgrad.addColorStop(0.55,"#9fd0ef"); sgrad.addColorStop(1,"#d8f0ff");
   sctx.fillStyle=sgrad; sctx.fillRect(0,0,2,256);
   const skyTex=new THREE.CanvasTexture(skyCanvas); skyTex.encoding=THREE.sRGBEncoding;
-  const skyDome=new THREE.Mesh(new THREE.SphereGeometry(5600,24,16),
+  const skyDome=new THREE.Mesh(new THREE.SphereGeometry(6400,24,16),
       new THREE.MeshBasicMaterial({ map:skyTex, side:THREE.BackSide, fog:false }));
   scene.add(skyDome);
 
@@ -590,10 +627,10 @@ function buildEnvironment(){
   // grass-topped floating islands — cel-shaded, ellipsoid colliders
   const grassTex = _tex(texGrass(), 3);
   const islMat = new THREE.MeshToonMaterial({ color:0xcfe0a0, map:grassTex, gradientMap:GRAD });
-  for (let i=0;i<40;i++){
+  for (let i=0;i<60;i++){
     const s = rand(40,120), sy = rand(0.5,0.95);
     const m = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 1), islMat);
-    m.position.copy(randPoint(160));
+    m.position.copy(placePoint(160,0.28));
     m.rotation.set(rand(0,6),rand(0,6),rand(0,6));
     m.scale.set(1, sy, 1);
     scene.add(m);
@@ -602,14 +639,25 @@ function buildEnvironment(){
 
   // big dark asteroids — rocky, larger, ellipsoid colliders
   const astMat = new THREE.MeshToonMaterial({ color:0x8f8272, map:_tex(texRock(),3), gradientMap:GRAD });
-  for (let i=0;i<18;i++){
-    const s = rand(95,200), sy = rand(0.6,1), sz=rand(0.7,1);
+  for (let i=0;i<27;i++){
+    const s = rand(95,210), sy = rand(0.6,1), sz=rand(0.7,1);
     const m = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 1), astMat);
-    m.position.copy(randPoint(240));
+    m.position.copy(placePoint(240,0.3));
     m.rotation.set(rand(0,6),rand(0,6),rand(0,6));
     m.scale.set(1, sy, sz);
     scene.add(m);
     obstacles.push({ type:"ellipsoid", pos:m.position.clone(), rx:s*0.9, ry:s*sy*0.9, rz:s*sz*0.9 });
+  }
+
+  // pale ice crags — crystalline blue, ellipsoid colliders
+  const iceMat = new THREE.MeshToonMaterial({ color:0xbfe6ff, map:_tex(texCrystal(),2), gradientMap:GRAD });
+  for (let i=0;i<22;i++){
+    const s = rand(55,150), sy=rand(0.7,1.3);
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), iceMat);   // faceted
+    m.position.copy(placePoint(200,0.32));
+    m.rotation.set(rand(0,6),rand(0,6),rand(0,6)); m.scale.set(1,sy,rand(0.7,1));
+    scene.add(m);
+    obstacles.push({ type:"ellipsoid", pos:m.position.clone(), rx:s*0.9, ry:s*sy*0.9, rz:s*0.9 });
   }
 
   // energy columns — animated flowing energy + cylinder colliders
@@ -617,20 +665,20 @@ function buildEnvironment(){
   const colMat = new THREE.MeshStandardMaterial({ color:0x081820, metalness:0.5, roughness:0.4,
       emissive:0xffffff, emissiveMap:enTex, emissiveIntensity:1.2 });
   envAnim.push({ tex:enTex, sy:-0.35 });
-  for (let i=0;i<26;i++){
-    const h = rand(360,900), cr = rand(5,10);
+  for (let i=0;i<39;i++){
+    const h = rand(360,960), cr = rand(5,11);
     const c = new THREE.Mesh(new THREE.CylinderGeometry(cr,cr,h,12), colMat);
-    c.position.set(rand(-w.hx+80,w.hx-80), rand(-160,160), rand(-w.hz+80,w.hz-80));
+    c.position.copy(placePoint(90,0.25)); c.position.y = rand(-260,260);
     scene.add(c);
     obstacles.push({ type:"cylinder", pos:c.position.clone(), r:cr, halfH:h/2 });
   }
 
   // rocky spires — solid tapered rock pillars (cylinder colliders)
   const spireMat = new THREE.MeshToonMaterial({ color:0x9aa2ae, map:_tex(texRock(),4), gradientMap:GRAD });
-  for (let i=0;i<20;i++){
-    const h = rand(300,780), cr = rand(16,36);
+  for (let i=0;i<30;i++){
+    const h = rand(300,820), cr = rand(16,38);
     const c = new THREE.Mesh(new THREE.CylinderGeometry(cr*rand(0.4,0.8), cr, h, 7), spireMat);
-    c.position.set(rand(-w.hx+140,w.hx-140), rand(-w.hy*0.45,w.hy*0.45), rand(-w.hz+140,w.hz-140));
+    c.position.copy(placePoint(140,0.3));
     c.rotation.set(rand(-0.2,0.2), rand(0,6), rand(-0.2,0.2));
     scene.add(c);
     obstacles.push({ type:"cylinder", pos:c.position.clone(), r:cr, halfH:h/2 });
@@ -638,10 +686,20 @@ function buildEnvironment(){
 
   // metal monoliths / stations — box visual, cylinder collider enclosing the corners
   const metalMat = new THREE.MeshToonMaterial({ color:0xa6b6c8, map:_tex(texMetal(),1), gradientMap:GRAD });
-  for (let i=0;i<16;i++){
-    const wd=rand(55,130), hg=rand(90,300), dp=rand(55,130);
+  for (let i=0;i<24;i++){
+    const wd=rand(55,140), hg=rand(90,320), dp=rand(55,140);
     const m = new THREE.Mesh(new THREE.BoxGeometry(wd,hg,dp), metalMat);
-    m.position.copy(randPoint(220)); m.rotation.y=rand(0,6);
+    m.position.copy(placePoint(200,0.28)); m.rotation.y=rand(0,6);
+    scene.add(m);
+    obstacles.push({ type:"cylinder", pos:m.position.clone(), r:Math.hypot(wd,dp)/2*1.02, halfH:hg/2 });
+  }
+
+  // ancient obelisks — tall dark stone slabs (cylinder colliders)
+  const obMat = new THREE.MeshToonMaterial({ color:0x6b6458, map:_tex(texRock(),2), gradientMap:GRAD });
+  for (let i=0;i<16;i++){
+    const wd=rand(26,54), hg=rand(240,620), dp=rand(26,54);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(wd,hg,dp), obMat);
+    m.position.copy(placePoint(160,0.34)); m.rotation.set(rand(-0.15,0.15),rand(0,6),rand(-0.15,0.15));
     scene.add(m);
     obstacles.push({ type:"cylinder", pos:m.position.clone(), r:Math.hypot(wd,dp)/2*1.02, halfH:hg/2 });
   }
@@ -650,9 +708,9 @@ function buildEnvironment(){
   const crysTex = _tex(texCrystal(), 1);
   const crysMat = new THREE.MeshStandardMaterial({ color:0x9fe8ff, map:crysTex,
       emissive:0x39b6ff, emissiveMap:crysTex, emissiveIntensity:0.85, roughness:0.25, metalness:0.1 });
-  for (let i=0;i<16;i++){
-    const R = rand(45,95), grp = new THREE.Group();
-    grp.position.copy(randPoint(200));
+  for (let i=0;i<24;i++){
+    const R = rand(45,100), grp = new THREE.Group();
+    grp.position.copy(placePoint(200,0.28));
     const shards = 4 + Math.floor(Math.random()*4);
     for(let k=0;k<shards;k++){
       const sh = new THREE.Mesh(new THREE.OctahedronGeometry(rand(R*0.45,R*0.9),0), crysMat);
@@ -662,6 +720,141 @@ function buildEnvironment(){
     }
     scene.add(grp);
     obstacles.push({ type:"sphere", pos:grp.position.clone(), r:R*0.92 });
+  }
+
+  // ---- NEW SHAPES: composite structures with multi-part colliders ----
+
+  // stone arches — two legs + a span you can fly under
+  for (let i=0;i<12;i++){
+    const legH=rand(150,340), legR=rand(12,22), span=rand(90,190);
+    const base=placePoint(220,0.2); const yaw=rand(0,6.28);
+    const dx=Math.cos(yaw), dz=Math.sin(yaw);
+    for(const s of [-1,1]){
+      const lp=new V(base.x+dx*span*0.5*s, base.y, base.z+dz*span*0.5*s);
+      const leg=new THREE.Mesh(new THREE.CylinderGeometry(legR*0.8,legR,legH,7), spireMat);
+      leg.position.copy(lp); scene.add(leg);
+      obstacles.push({ type:"cylinder", pos:lp.clone(), r:legR, halfH:legH/2 });
+    }
+    const top=new THREE.Mesh(new THREE.BoxGeometry(span+legR*2, legR*1.8, legR*1.8), spireMat);
+    top.position.set(base.x, base.y+legH/2, base.z); top.rotation.y=-yaw; scene.add(top);
+    obstacles.push({ type:"ellipsoid", pos:top.position.clone(),
+      rx:(span/2+legR)*Math.abs(dx)+legR, ry:legR, rz:(span/2+legR)*Math.abs(dz)+legR });
+  }
+
+  // giant stone toruses — fly through the hole, but the body is solid
+  for (let i=0;i<10;i++){
+    const R=rand(70,130), tube=rand(14,26);
+    const p=placePoint(220,0.22);
+    const m=new THREE.Mesh(new THREE.TorusGeometry(R,tube,8,20), astMat);
+    m.position.copy(p); m.rotation.set(rand(0,6),rand(0,6),rand(0,6));
+    scene.add(m);
+    const q=m.quaternion, seg=8;                       // ring of colliders around the tube
+    for(let k=0;k<seg;k++){
+      const a=k/seg*6.283;
+      const local=new V(Math.cos(a)*R, Math.sin(a)*R, 0).applyQuaternion(q).add(p);
+      obstacles.push({ type:"sphere", pos:local, r:tube*1.25 });
+    }
+  }
+
+  // wreck crosses — two crossed girders
+  for (let i=0;i<12;i++){
+    const L=rand(110,240), t=rand(10,20);
+    const p=placePoint(200,0.26);
+    const g=new THREE.Group(); g.position.copy(p);
+    g.rotation.set(rand(0,6),rand(0,6),rand(0,6));
+    const a=new THREE.Mesh(new THREE.BoxGeometry(L,t,t), metalMat);
+    const b=new THREE.Mesh(new THREE.BoxGeometry(t,t,L), metalMat);
+    g.add(a); g.add(b); scene.add(g);
+    obstacles.push({ type:"sphere", pos:p.clone(), r:Math.max(t*2.2, L*0.28) });
+    for(const s of [-1,1]){
+      const off=new V(L*0.32*s,0,0).applyEuler(g.rotation).add(p);
+      const off2=new V(0,0,L*0.32*s).applyEuler(g.rotation).add(p);
+      obstacles.push({ type:"sphere", pos:off, r:t*1.6 });
+      obstacles.push({ type:"sphere", pos:off2, r:t*1.6 });
+    }
+  }
+
+  // dumbbells — two spheres joined by a shaft
+  for (let i=0;i<12;i++){
+    const R=rand(30,58), len=rand(110,220);
+    const p=placePoint(200,0.24);
+    const g=new THREE.Group(); g.position.copy(p);
+    g.rotation.set(rand(0,6),rand(0,6),rand(0,6));
+    const bar=new THREE.Mesh(new THREE.CylinderGeometry(R*0.22,R*0.22,len,8), metalMat);
+    bar.rotation.z=Math.PI/2; g.add(bar);
+    for(const s of [-1,1]){
+      const bell=new THREE.Mesh(new THREE.IcosahedronGeometry(R,0), iceMat);
+      bell.position.x=s*len/2; g.add(bell);
+      const wp=new V(s*len/2,0,0).applyEuler(g.rotation).add(p);
+      obstacles.push({ type:"sphere", pos:wp, r:R*0.94 });
+    }
+    scene.add(g);
+    obstacles.push({ type:"sphere", pos:p.clone(), r:R*0.4 });
+  }
+
+  // layered slabs — stacked flat plates, tricky to thread
+  for (let i=0;i<12;i++){
+    const p=placePoint(220,0.26), n=2+Math.floor(Math.random()*3);
+    for(let k=0;k<n;k++){
+      const wd=rand(90,210), dp=rand(90,210), hg=rand(10,20);
+      const sp=new V(p.x+rand(-30,30), p.y+k*rand(55,95)-40, p.z+rand(-30,30));
+      const m=new THREE.Mesh(new THREE.BoxGeometry(wd,hg,dp), obMat);
+      m.position.copy(sp); m.rotation.y=rand(0,6); scene.add(m);
+      obstacles.push({ type:"ellipsoid", pos:sp.clone(), rx:Math.max(wd,dp)*0.48, ry:hg*1.3, rz:Math.max(wd,dp)*0.48 });
+    }
+  }
+
+  // lattice trusses — long open frames of beams
+  for (let i=0;i<10;i++){
+    const len=rand(220,460), w2=rand(22,40);
+    const p=placePoint(200,0.28);
+    const g=new THREE.Group(); g.position.copy(p);
+    g.rotation.set(rand(-0.5,0.5),rand(0,6),rand(-0.5,0.5));
+    for(const [ox,oy] of [[-w2,-w2],[w2,-w2],[-w2,w2],[w2,w2]]){
+      const beam=new THREE.Mesh(new THREE.BoxGeometry(5,5,len), metalMat);
+      beam.position.set(ox,oy,0); g.add(beam);
+    }
+    const rungs=Math.floor(len/55);
+    for(let k=0;k<=rungs;k++){
+      const z=-len/2+k*(len/rungs);
+      const rg=new THREE.Mesh(new THREE.BoxGeometry(w2*2,4,4), metalMat); rg.position.set(0,-w2,z); g.add(rg);
+      const rg2=new THREE.Mesh(new THREE.BoxGeometry(4,w2*2,4), metalMat); rg2.position.set(-w2,0,z); g.add(rg2);
+    }
+    scene.add(g);
+    const steps=Math.max(3,Math.round(len/90));
+    for(let k=0;k<=steps;k++){
+      const z=-len/2+k*(len/steps);
+      const wp=new V(0,0,z).applyEuler(g.rotation).add(p);
+      obstacles.push({ type:"sphere", pos:wp, r:w2*1.25 });
+    }
+  }
+
+  // ---- BOOST RINGS: fly through for a burst of speed (fit ~3 drones) ----
+  // strictly inside the arena, well separated from each other and from obstacles
+  const RING_MIN_GAP = 420;
+  for (let i=0;i<13;i++){
+    const R = rand(36,48), tube = rand(2.6,3.6);
+    let pp=null;
+    for(let t=0;t<160;t++){
+      const cand = randPoint(R+220);                        // never near a wall, never outside
+      if(insideObstacles(cand, R+30)) continue;
+      let ok=true;
+      for(const other of rings){ if(other.pos.distanceTo(cand) < RING_MIN_GAP){ ok=false; break; } }
+      if(ok){ pp=cand; break; }
+    }
+    if(!pp) continue;                                        // no room left → fewer rings, never bad ones
+    const mat = new THREE.MeshBasicMaterial({ color:0x33ffd0, transparent:true, opacity:0.9,
+      blending:THREE.AdditiveBlending, depthWrite:false });
+    const m = new THREE.Mesh(new THREE.TorusGeometry(R, tube, 10, 36), mat);
+    const glow = new THREE.Mesh(new THREE.TorusGeometry(R, tube*2.6, 10, 36),
+      new THREE.MeshBasicMaterial({ color:0x33ffd0, transparent:true, opacity:0.22,
+        blending:THREE.AdditiveBlending, depthWrite:false }));
+    m.add(glow);
+    m.position.copy(pp);
+    m.quaternion.setFromEuler(new THREE.Euler(rand(0,6),rand(0,6),rand(0,6)));
+    scene.add(m);
+    const normal = new V(0,0,1).applyQuaternion(m.quaternion).normalize();
+    rings.push({ mesh:m, mat, glow, pos:m.position.clone(), normal, r:R, cd:0 });
   }
 }
 
@@ -805,7 +998,7 @@ function makeEntity(isPlayer, name, color){
     energy:CONFIG.vit.energy, maxEnergy:CONFIG.vit.energy,
     escore:0, level:1, dmg:CONFIG.weapon.dmg, maxSpeed:CONFIG.flight.maxSpeed,
     fireT:0, dashT:0, alive:true, hitFlash:0, bankP:0, bankR:0, kills:0, deaths:0,
-    mods:defaultMods(), buffs:{combat:0,overload:0,magnet:0,overheat:0}, pending:0,
+    mods:defaultMods(), buffs:{combat:0,overload:0,magnet:0,overheat:0,boost:0}, pending:0,
     caps:defaultCaps(), perks:defaultPerks(), spawnGuard:0,
     ai:{ mode:"seek", t:0, target:null, aim:new V(0,0,1) }
   };
@@ -842,7 +1035,7 @@ function respawn(e, silent){
   e.shield=CONFIG.vit.shield; e.maxShield=CONFIG.vit.shield;
   e.energy=CONFIG.vit.energy; e.maxEnergy=CONFIG.vit.energy;
   e.escore=0; e.level=1; e.alive=true; e.dashT=0; e.fireT=0; e.pending=0;
-  e.mods=defaultMods(); e.buffs={combat:0,overload:0,magnet:0,overheat:0};
+  e.mods=defaultMods(); e.buffs={combat:0,overload:0,magnet:0,overheat:0,boost:0};
   e.caps=defaultCaps(); e.perks=defaultPerks(); e._taken=new Set();
   e.spawnGuard = silent ? 0 : 2.6;         // brief invulnerability after dying
   clearEvolution(e);
@@ -1111,7 +1304,7 @@ function updatePlayer(dt){
 
   const m=p.mods, ov=p.buffs.overload>0, overheat=p.buffs.overheat>0;
   const boosting = (keys.ShiftLeft||keys.ShiftRight) && p.energy>1 && !overheat;
-  const speedMul = ov?1.4:1;
+  const speedMul = (ov?1.4:1) * (p.buffs.boost>0?1.55:1);
   if(tmp.lengthSq()>0){
     tmp.normalize().multiplyScalar(F.accel*m.accelMul*(boosting?1.9:1)*speedMul*dt);
     p.vel.add(tmp);
@@ -1305,6 +1498,7 @@ function regen(e, dt){
   // temporary buffs countdown
   if(b.combat>0) b.combat-=dt;
   if(b.magnet>0) b.magnet-=dt;
+  if(b.boost>0) b.boost-=dt;
   if(b.overload>0){ b.overload-=dt; if(b.overload<=0){ b.overheat=1.6; } }
   if(b.overheat>0) b.overheat-=dt;
   // ability / ultimate timers
@@ -1497,6 +1691,27 @@ function updateProjectiles(dt){
     if(dead || p.life<=0){
       p.mesh.visible=false; projPool.push(p);
       projectiles.splice(i,1);
+    }
+  }
+}
+
+function applyBoost(e){
+  e.buffs.boost = Math.max(e.buffs.boost||0, 3.2);
+  if(e.vel.lengthSq()>1) e.vel.multiplyScalar(1.35);      // instant kick through the ring
+  spawnBurst(e.pos, 0x33ffd0, 20, 150);
+  if(e.isPlayer){ playDash(); addShake(1.2,0.14); }
+}
+function updateRings(dt){
+  for(const r of rings){
+    if(r.cd>0){ r.cd-=dt; r.mat.opacity=0.25; r.glow.material.opacity=0.06; continue; }
+    r.mat.opacity=0.9; r.glow.material.opacity=0.22;
+    for(const e of entities){ if(!e.alive) continue;
+      _aim1.subVectors(e.pos, r.pos);
+      const along=_aim1.dot(r.normal);
+      if(Math.abs(along)<16){
+        _aim2.copy(_aim1).addScaledVector(r.normal, -along);   // radial offset from the axis
+        if(_aim2.length() < r.r){ applyBoost(e); r.cd=1.6; break; }
+      }
     }
   }
 }
@@ -2121,6 +2336,7 @@ function updateHUD(){
   // active abilities
   const b=p.buffs, c=p.caps, pills=[];
   if(p.spawnGuard>0) pills.push(`<div class="buff ready">НЕУЯЗВИМ <b>${p.spawnGuard.toFixed(1)}с</b></div>`);
+  if(b.boost>0)    pills.push(`<div class="buff ready">УСКОРЕНИЕ <b>${b.boost.toFixed(1)}с</b></div>`);
   if(c.cloak>0)    pills.push(`<div class="buff magnet">МАСКИРОВКА <b>${c.cloak.toFixed(0)}с</b></div>`);
   if(b.combat>0)   pills.push(`<div class="buff combat">УРОН ×1.6 <b>${b.combat.toFixed(0)}с</b></div>`);
   if(b.overload>0) pills.push(`<div class="buff overload">ПЕРЕГРУЗКА <b>${b.overload.toFixed(0)}с</b></div>`);
@@ -2171,6 +2387,7 @@ function startMatch(){
 
   // spheres (repair is now one of the 8 sphere types)
   legendaryActive=false;
+  for(const r of rings) r.cd=0;
   if(spheres.length===0){ for(let i=0;i<CONFIG.sphereCount;i++) spheres.push(makeSphere()); }
   spheres.forEach(resetSphere);
 
@@ -2227,6 +2444,7 @@ function loop(){
     updateProjectiles(dt);
     magnet(spheres, dt, false);
     magnet(loot, dt, true);
+    updateRings(dt);
     tickRespawns();
     updateBoundary(player.pos);
     updateHUD();
