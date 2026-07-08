@@ -114,7 +114,7 @@
   #resume{font-size:12px;color:var(--dim);letter-spacing:.2em}
 
   /* active-ability buff bar (bottom-center) */
-  #buffs{left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px}
+  #buffs{left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:80vw}
   .buff{display:flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid rgba(255,255,255,.2);
     background:rgba(10,16,26,.65);font-size:11px;letter-spacing:.08em;text-transform:uppercase;border-radius:2px}
   .buff b{font-weight:700}
@@ -122,6 +122,9 @@
   .buff.overload{color:#c56bff;border-color:#c56bff}
   .buff.magnet{color:#eaf2ff;border-color:#eaf2ff}
   .buff.overheat{color:#ff9b3b;border-color:#ff9b3b}
+  .buff.ready{color:#33ffd0;border-color:#33ffd0}
+  .buff.ult{color:#ff8a1e;border-color:#ff8a1e;text-shadow:0 0 8px #ff8a1e}
+  .buff.cd{color:#7d8ba0;border-color:#3a4658}
 
   /* upgrade choice — compact, bottom of screen, non-blocking */
   #upgrade{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:15;
@@ -140,6 +143,10 @@
   .upCat{font-size:9px;letter-spacing:.2em;font-weight:700}
   .upName{font-size:13px;color:var(--ink);font-weight:700;line-height:1.15}
   .upDesc{font-size:11px;color:var(--dim);line-height:1.3}
+  .upRare{font-weight:700}
+  .upCard.r-rare{box-shadow:0 0 14px rgba(90,160,255,.35)}
+  .upCard.r-legend{box-shadow:0 0 20px rgba(255,180,60,.55)}
+  .upCard.r-legend .upName{color:#ffe6a0}
 </style>
 </head>
 <body>
@@ -190,7 +197,7 @@
   <div class="controls">
     <b>W A S D</b> — тяга &nbsp;·&nbsp; <b>Мышь</b> — обзор/прицел &nbsp;·&nbsp; <b>ЛКМ</b> — огонь<br>
     <b>Space</b> — вверх &nbsp;·&nbsp; <b>Ctrl</b> — вниз &nbsp;·&nbsp; <b>Shift</b> — форсаж &nbsp;·&nbsp; <b>Q</b> — рывок (Dash)<br>
-    <b>1 · 2 · 3</b> — выбор улучшения на ходу &nbsp;·&nbsp; <b>M</b> — звук вкл/выкл<br>
+    <b>1 · 2 · 3</b> — выбор улучшения &nbsp;·&nbsp; <b>E</b> — способность &nbsp;·&nbsp; <b>R</b> — ультимейт &nbsp;·&nbsp; <b>M</b> — звук<br>
     <span style="opacity:.6">Чем больше энергии — тем ярче ты светишься и тем сильнее на тебя охотятся.</span><br>
     <span style="opacity:.85;font-size:10px">Сферы: ⚡энергия · 🔴урон · 🛡щит · 🔧ремонт · 🟣перегрузка · 🧲магнит · 🔺опыт · ★легенда</span><br>
     <span style="opacity:.6;font-size:10px">Каждые 5 уровней — выбор улучшения из трёх. Свой дрон — синий контур, враги — красный.</span>
@@ -225,7 +232,7 @@
 const CONFIG = {
   world:   { hx:750, hy:510, hz:750 },     // half-extents (world = 1500 x 1020 x 1500) — 3x bigger
   botCount: 9,
-  sphereCount: 80,
+  sphereCount: 55,
   repairCount: 10,
   matchSeconds: 15*60,
 
@@ -240,7 +247,7 @@ const CONFIG = {
     shield: 50, hull: 100, energy: 100,
     shieldRegen: 16, shieldDelay: 3.2, energyRegen: 26, killHeal: 26
   },
-  level: { per: 105 }, // energyScore per level (linear)
+  level: { base: 30, grow: 0.15 }, // rising XP cost per level (early cheap, later earned)
   sphere: { pickR: 22, magnet: 150, collectR: 6 }
 };
 
@@ -647,6 +654,12 @@ function defaultMods(){
     shieldRegenMul:1, shieldDelayMul:1, magnetMul:1, pickupMul:1, xpMul:1,
     dashMul:1, boostMul:1, costMul:1, hullRegen:0, dmgResist:0 };
 }
+function defaultCaps(){
+  return { weaponMode:"normal", spread:1, pierce:0, projSize:1,
+    ability:null, abilityCd:0, abilityCdMax:0, cloak:0,
+    hasUlt:false, ult:0, threatBonus:0 };
+}
+function defaultPerks(){ return { berserk:false, vampire:false, glass:false, overclock:false }; }
 function makeEntity(isPlayer, name, color){
   const outline = isPlayer ? 0x27f0ff : 0xff445e;   // friend=cyan, foe=red
   const parts = makeDroneMesh(color, outline);
@@ -661,6 +674,7 @@ function makeEntity(isPlayer, name, color){
     escore:0, level:1, dmg:CONFIG.weapon.dmg, maxSpeed:CONFIG.flight.maxSpeed,
     fireT:0, dashT:0, alive:true, hitFlash:0, bankP:0, bankR:0, kills:0, deaths:0,
     mods:defaultMods(), buffs:{combat:0,overload:0,magnet:0,overheat:0}, pending:0,
+    caps:defaultCaps(), perks:defaultPerks(),
     ai:{ mode:"seek", t:0, target:null, aim:new V(0,0,1) }
   };
   applyLevel(e);
@@ -686,6 +700,7 @@ function respawn(e, silent){
   e.energy=CONFIG.vit.energy; e.maxEnergy=CONFIG.vit.energy;
   e.escore=0; e.level=1; e.alive=true; e.dashT=0; e.fireT=0; e.pending=0;
   e.mods=defaultMods(); e.buffs={combat:0,overload:0,magnet:0,overheat:0};
+  e.caps=defaultCaps(); e.perks=defaultPerks(); e._taken=new Set();
   clearEvolution(e);
   applyLevel(e);
   if (e.isPlayer){ yaw=e.yaw; pitch=0; }
@@ -740,51 +755,91 @@ function addEvolution(e, cat){
   }
 }
 
+/* Upgrade pool. apply(e) mutates e.mods / e.caps / e.perks.
+   rarity: common | rare | legend   ·   once: unique   ·   botOk: bots may pick
+   evo: which visual evolution to bolt on (engine|weapon|shield|hull)          */
 const UPGRADES = [
-  { cat:"engine", name:"Форсированный двигатель", desc:"+12% макс. скорости", apply:m=>m.speedMul*=1.12 },
-  { cat:"engine", name:"Ускоренный разгон",       desc:"+18% разгон",         apply:m=>m.accelMul*=1.18 },
-  { cat:"engine", name:"Удлинённый рывок",         desc:"+25% сила рывка",     apply:m=>m.dashMul*=1.25 },
-  { cat:"weapon", name:"Усиленное орудие",         desc:"+15% урона",          apply:m=>m.dmgMul*=1.15 },
-  { cat:"weapon", name:"Скорострельность",         desc:"+18% темп стрельбы",  apply:m=>m.fireCdMul*=0.85 },
-  { cat:"weapon", name:"Разгон снарядов",          desc:"+25% скорость пуль",  apply:m=>m.projSpeedMul*=1.25 },
-  { cat:"shield", name:"Усиленный щит",            desc:"+20% щита",           apply:m=>m.shieldMul*=1.2 },
-  { cat:"shield", name:"Быстрая регенерация",      desc:"+40% восст. щита",    apply:m=>m.shieldRegenMul*=1.4 },
-  { cat:"shield", name:"Мгновенный щит",           desc:"−40% задержки щита",  apply:m=>m.shieldDelayMul*=0.6 },
-  { cat:"hull",   name:"Бронирование",             desc:"+18% корпуса",        apply:m=>m.hullMul*=1.18 },
-  { cat:"hull",   name:"Наноремонт",               desc:"корпус восстанавливается", apply:m=>m.hullRegen+=1.3 },
-  { cat:"hull",   name:"Композитная броня",        desc:"−12% получаемого урона", apply:m=>m.dmgResist=Math.min(0.55,m.dmgResist+0.12) },
-  { cat:"energy", name:"Ёмкий реактор",            desc:"+20% энергии",        apply:m=>m.energyMul*=1.2 },
-  { cat:"energy", name:"Экономия энергии",         desc:"−15% расхода",        apply:m=>m.costMul*=0.85 },
-  { cat:"energy", name:"Долгий форсаж",            desc:"−20% расход форсажа", apply:m=>m.boostMul*=0.8 },
-  { cat:"collect",name:"Магнитное поле",           desc:"+35% радиус притяжения", apply:m=>m.magnetMul*=1.35 },
-  { cat:"collect",name:"Быстрый сбор",             desc:"+40% скорость подбора",  apply:m=>m.pickupMul*=1.4 },
-  { cat:"collect",name:"Резонанс энергии",         desc:"+20% опыта со сфер",  apply:m=>m.xpMul*=1.2 }
+  // ---- COMMON: stat perks (repeatable) ----
+  { id:"spd",  cat:"engine", rarity:"common", botOk:true, evo:"engine", name:"Форсаж двигателя", desc:"+14% макс. скорости", apply:e=>e.mods.speedMul*=1.14 },
+  { id:"acc",  cat:"engine", rarity:"common", botOk:true, evo:"engine", name:"Ускоренный разгон", desc:"+20% разгон", apply:e=>e.mods.accelMul*=1.2 },
+  { id:"dmg",  cat:"weapon", rarity:"common", botOk:true, evo:"weapon", name:"Усиленное орудие", desc:"+16% урона", apply:e=>e.mods.dmgMul*=1.16 },
+  { id:"rof",  cat:"weapon", rarity:"common", botOk:true, evo:"weapon", name:"Скорострельность", desc:"+18% темп огня", apply:e=>e.mods.fireCdMul*=0.82 },
+  { id:"shd",  cat:"shield", rarity:"common", botOk:true, evo:"shield", name:"Усиленный щит", desc:"+22% щита", apply:e=>e.mods.shieldMul*=1.22 },
+  { id:"srg",  cat:"shield", rarity:"common", botOk:true, evo:"shield", name:"Регенерация щита", desc:"+45% восст. щита", apply:e=>e.mods.shieldRegenMul*=1.45 },
+  { id:"hul",  cat:"hull",   rarity:"common", botOk:true, evo:"hull",   name:"Бронирование", desc:"+20% корпуса", apply:e=>e.mods.hullMul*=1.2 },
+  { id:"res",  cat:"hull",   rarity:"common", botOk:true, evo:"hull",   name:"Композитная броня", desc:"−12% урона по тебе", apply:e=>e.mods.dmgResist=Math.min(0.55,e.mods.dmgResist+0.12) },
+  { id:"nrg",  cat:"energy", rarity:"common", botOk:true, name:"Ёмкий реактор", desc:"+22% энергии", apply:e=>e.mods.energyMul*=1.22 },
+  { id:"mag",  cat:"collect",rarity:"common", botOk:true, name:"Магнитное поле", desc:"+40% радиус притяжения", apply:e=>e.mods.magnetMul*=1.4 },
+  { id:"xp",   cat:"collect",rarity:"common", botOk:true, name:"Резонанс энергии", desc:"+25% опыта со сфер", apply:e=>e.mods.xpMul*=1.25 },
+
+  // ---- RARE: weapon modes (change how you shoot; bots can use them too) ----
+  { id:"spread", cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Веерный залп", desc:"3 пули веером (урон каждой ниже)", apply:e=>{ e.caps.weaponMode="spread"; e.caps.spread=3; e.mods.dmgMul*=0.72; } },
+  { id:"pierce", cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Пробивающие пули", desc:"Прошивают до 3 целей", apply:e=>{ e.caps.pierce=2; } },
+  { id:"heavy",  cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Тяжёлое орудие", desc:"Редкие, но мощные выстрелы", apply:e=>{ e.caps.projSize=1.9; e.mods.dmgMul*=1.9; e.mods.fireCdMul*=1.8; } },
+  { id:"rapid",  cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Скорострел", desc:"Очень быстрый огонь, урон ниже", apply:e=>{ e.mods.fireCdMul*=0.55; e.mods.dmgMul*=0.82; } },
+
+  // ---- RARE: active abilities (bound to E; player only) ----
+  { id:"pulse", cat:"ability", rarity:"rare", once:true, evo:"shield", name:"Импульс (E)", desc:"Ударная волна: урон и отброс вокруг", apply:e=>{ e.caps.ability="pulse"; e.caps.abilityCdMax=6; } },
+  { id:"cloak", cat:"ability", rarity:"rare", once:true, name:"Маскировка (E)", desc:"Гаснешь на 4с — тебя не берут на прицел", apply:e=>{ e.caps.ability="cloak"; e.caps.abilityCdMax=13; } },
+  { id:"blink", cat:"ability", rarity:"rare", once:true, evo:"engine", name:"Блинк (E)", desc:"Мгновенный телепорт-рывок вперёд", apply:e=>{ e.caps.ability="blink"; e.caps.abilityCdMax=7; } },
+
+  // ---- RARE: trade-off perks ----
+  { id:"glass",  cat:"perk", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Стеклянная пушка", desc:"+60% урон, но −30% корпус", apply:e=>{ e.mods.dmgMul*=1.6; e.mods.hullMul*=0.7; } },
+  { id:"bersk",  cat:"perk", rarity:"rare", botOk:true, once:true, name:"Берсерк", desc:"Чем меньше HP — тем больше урон", apply:e=>{ e.perks.berserk=true; } },
+  { id:"vamp",   cat:"perk", rarity:"rare", botOk:true, once:true, name:"Вампиризм", desc:"Лечение с киллов, но нет регена корпуса", apply:e=>{ e.perks.vampire=true; } },
+  { id:"oclock", cat:"perk", rarity:"rare", botOk:true, once:true, evo:"engine", name:"Разгон ядра", desc:"+25% скорости и темпа, но светишься ярче", apply:e=>{ e.mods.speedMul*=1.25; e.mods.fireCdMul*=0.9; e.caps.threatBonus+=0.5; e.perks.overclock=true; } },
+
+  // ---- LEGEND: keystones (build-defining) ----
+  { id:"kCol", cat:"keystone", rarity:"legend", botOk:true, once:true, evo:"shield", name:"⟡ Коллектор", desc:"Магнит-гигант, +опыт, но слабее в бою", apply:e=>{ e.mods.magnetMul*=1.9; e.mods.pickupMul*=1.7; e.mods.xpMul*=1.5; e.mods.dmgMul*=0.85; } },
+  { id:"kTank",cat:"keystone", rarity:"legend", botOk:true, once:true, evo:"hull", name:"⟡ Танк", desc:"Крепость: +корпус и защита, но медленный", apply:e=>{ e.mods.hullMul*=1.7; e.mods.dmgResist=Math.min(0.6,e.mods.dmgResist+0.25); e.mods.speedMul*=0.9; } },
+  { id:"kSpd", cat:"keystone", rarity:"legend", botOk:true, once:true, evo:"engine", name:"⟡ Спидстер", desc:"Скорость и рывок, но хрупкий", apply:e=>{ e.mods.speedMul*=1.4; e.mods.accelMul*=1.3; e.mods.dashMul*=1.3; e.mods.hullMul*=0.85; } },
+  { id:"kGun", cat:"keystone", rarity:"legend", botOk:true, once:true, evo:"weapon", name:"⟡ Оружейник", desc:"Превосходство в огне по всем статам", apply:e=>{ e.mods.dmgMul*=1.3; e.mods.fireCdMul*=0.8; e.mods.projSpeedMul*=1.3; } },
+
+  // ---- LEGEND: ultimate (charged, key R; player only) ----
+  { id:"ult", cat:"ult", rarity:"legend", once:true, evo:"weapon", name:"★ Ультимейт: Нова", desc:"Заряд от сбора и киллов → взрыв (R)", apply:e=>{ e.caps.hasUlt=true; } }
 ];
-const EVO_FOR = { engine:"engine", weapon:"weapon", shield:"shield", hull:"hull", energy:"engine", collect:"weapon" };
 
 function applyUpgrade(e, up){
-  up.apply(e.mods);
-  addEvolution(e, EVO_FOR[up.cat] || "hull");
+  if(!e._taken) e._taken=new Set();
+  up.apply(e);
+  if(up.once) e._taken.add(up.id);
+  if(up.evo) addEvolution(e, up.evo);
   applyLevel(e);
 }
-function pick3(){
-  const pool=[...UPGRADES]; const out=[];
-  for(let i=0;i<3 && pool.length;i++){ out.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]); }
+const RWEIGHT = { common:72, rare:24, legend:6 };
+function pick3(e){
+  const taken=e._taken||(e._taken=new Set()), forBot=!e.isPlayer;
+  const pool=UPGRADES.filter(u=>{
+    if(u.once && taken.has(u.id)) return false;
+    if(forBot && !u.botOk) return false;
+    return true;
+  });
+  const out=[];
+  for(let i=0;i<3 && pool.length;i++){
+    let tot=0; for(const u of pool) tot+=RWEIGHT[u.rarity]||10;
+    let r=Math.random()*tot, idx=0;
+    for(let k=0;k<pool.length;k++){ r-=RWEIGHT[pool[k].rarity]||10; if(r<=0){ idx=k; break; } }
+    out.push(pool.splice(idx,1)[0]);
+  }
   return out;
 }
-function botAutoUpgrade(e){ applyUpgrade(e, UPGRADES[Math.floor(Math.random()*UPGRADES.length)]); }
+function botAutoUpgrade(e){ const c=pick3(e); if(c[0]) applyUpgrade(e,c[0]); }
 
 let upgradeChoices=[]; let upgradeOpen=false;
 function openUpgrade(){
   upgradeOpen=true;                 // game keeps running — no pause, no pointer unlock
-  upgradeChoices=pick3();
+  upgradeChoices=pick3(player);
   const wrap=$("#upgradeOpts"); wrap.innerHTML="";
-  const catCol={engine:"#63e5ff",weapon:"#ff7a45",shield:"#37b6ff",hull:"#ffd23b",energy:"#b14bff",collect:"#2fdd5a"};
+  const catCol={engine:"#63e5ff",weapon:"#ff7a45",shield:"#37b6ff",hull:"#ffd23b",
+    energy:"#b14bff",collect:"#2fdd5a",ability:"#33ffd0",perk:"#ff5db0",keystone:"#ffd23b",ult:"#ff8a1e"};
+  const catLbl={engine:"ДВИГАТЕЛЬ",weapon:"ОРУЖИЕ",shield:"ЩИТ",hull:"КОРПУС",energy:"ЭНЕРГИЯ",
+    collect:"СБОР",ability:"СПОСОБНОСТЬ",perk:"ПЕРК",keystone:"KEYSTONE",ult:"УЛЬТ"};
   upgradeChoices.forEach((u,i)=>{
-    const card=document.createElement("div"); card.className="upCard";
+    const card=document.createElement("div"); card.className="upCard r-"+u.rarity;
     card.style.borderColor=catCol[u.cat]||"#888";
     card.innerHTML=`<span class="upKey">${i+1}</span>`+
-                   `<div class="upCat" style="color:${catCol[u.cat]}">${u.cat.toUpperCase()}</div>`+
+                   `<div class="upCat" style="color:${catCol[u.cat]}">${catLbl[u.cat]||u.cat}`+
+                   (u.rarity!=="common"?` · <span class="upRare">${u.rarity==="legend"?"★ LEGEND":"◆ RARE"}</span>`:"")+`</div>`+
                    `<div class="upName">${u.name}</div><div class="upDesc">${u.desc}</div>`;
     card.onclick=()=>chooseUpgrade(i);
     wrap.appendChild(card);
@@ -813,6 +868,10 @@ function initInput(){
     if(e.code==="KeyM"){ setMasterVolume(masterVolume>0?0:0.85); }
     if(upgradeOpen && (e.code==="Digit1"||e.code==="Digit2"||e.code==="Digit3")){
       chooseUpgrade(+e.code.slice(5)-1); }
+    if(state==="play" && player && player.alive){
+      if(e.code==="KeyE") triggerAbility(player);
+      if(e.code==="KeyR") triggerUlt(player);
+    }
   });
   addEventListener("keyup",   e=>{ keys[e.code]=false; });
   addEventListener("mousedown", ()=>{ if(state==="play") mouseDown=true; });
@@ -919,6 +978,7 @@ function updateBot(e, dt){
     // find best enemy: weaker than me & close, or the leader if I'm strong
     let prey=null, pd=1e9, leader=getLeader();
     for(const o of entities){ if(o===e||!o.alive) continue;
+      if(o.caps && o.caps.cloak>0) continue;           // cloaked = invisible to bots
       const d=e.pos.distanceToSquared(o.pos);
       const weaker = threatOf(o) < threatOf(e)*1.15;
       if(weaker && d<200*200 && d<pd){ pd=d; prey=o; }
@@ -1037,48 +1097,92 @@ function applyPhysics(e, maxSpd, dt){
 }
 
 function regen(e, dt){
-  const m=e.mods, b=e.buffs;
+  const m=e.mods, b=e.buffs, c=e.caps;
   e.energy = Math.min(e.maxEnergy, e.energy + CONFIG.vit.energyRegen*dt);
   const delay = CONFIG.vit.shieldDelay*m.shieldDelayMul;
   if((now()-e.lastHit) > delay)
     e.shield = Math.min(e.maxShield, e.shield + CONFIG.vit.shieldRegen*m.shieldRegenMul*dt);
-  if(m.hullRegen>0) e.hull = Math.min(e.maxHull, e.hull + m.hullRegen*dt);
+  if(m.hullRegen>0 && !e.perks.vampire) e.hull = Math.min(e.maxHull, e.hull + m.hullRegen*dt);
   // temporary buffs countdown
   if(b.combat>0) b.combat-=dt;
   if(b.magnet>0) b.magnet-=dt;
   if(b.overload>0){ b.overload-=dt; if(b.overload<=0){ b.overheat=1.6; } }
   if(b.overheat>0) b.overheat-=dt;
-  // level from energy score
-  const nl = 1 + Math.floor(e.escore / CONFIG.level.per);
+  // ability / ultimate timers
+  if(c.abilityCd>0) c.abilityCd-=dt;
+  if(c.cloak>0) c.cloak-=dt;
+  // level from escalating energy score
+  const nl = levelForScore(e.escore);
   if(nl>e.level){
     const prev=e.level; e.level=nl; applyLevel(e);
     e.hull=Math.min(e.maxHull, e.hull+8); spawnBurst(e.pos,e.color,10,50);
-    const ups = Math.floor(nl/5) - Math.floor(prev/5);   // upgrade every 5 levels
+    if(c.hasUlt) c.ult=Math.min(100, c.ult+6*(nl-prev));
+    const ups = Math.floor(nl/10) - Math.floor(prev/10);   // upgrade every 10 levels
     if(ups>0){
       if(e.isPlayer) e.pending += ups;
       else for(let k=0;k<ups;k++) botAutoUpgrade(e);
     }
   } else if(nl<e.level){ e.level=nl; applyLevel(e); }
 }
+// escalating cost: early levels cheap, later ones earned. cumulative threshold for a level.
+function levelForScore(score){
+  const base=CONFIG.level.base, grow=CONFIG.level.grow;
+  let lvl=1, need=base, acc=0;
+  while(score>=acc+need && lvl<80){ acc+=need; lvl++; need=Math.round(base*(1+(lvl-1)*grow)); }
+  return lvl;
+}
+
+/* active ability (key E) + ultimate (key R) */
+function triggerAbility(e){
+  const c=e.caps; if(!c.ability || c.abilityCd>0 || !e.alive) return;
+  if(c.ability==="pulse"){
+    for(const o of entities){ if(!o.alive||o===e) continue;
+      const d=o.pos.distanceTo(e.pos);
+      if(d<175){ applyDamage(o, 24+e.dmg*0.6, e);
+        tmp.subVectors(o.pos,e.pos).normalize(); o.vel.addScaledVector(tmp, 240*(1-d/175)); } }
+    spawnBurst(e.pos, 0x63e5ff, 30, 190); playThud(42);
+  } else if(c.ability==="cloak"){
+    c.cloak=4; spawnBurst(e.pos, 0x9fe8ff, 14, 60);
+    if(e.isPlayer) feed(`<span class="k">Маскировка активна</span>`);
+  } else if(c.ability==="blink"){
+    const dir=(e.isPlayer?fwd:e.ai.aim).clone().normalize();
+    e.pos.addScaledVector(dir, 135); e.vel.addScaledVector(dir, 60);
+    spawnBurst(e.pos, e.color, 18, 130);
+  }
+  c.abilityCd=c.abilityCdMax;
+}
+function triggerUlt(e){
+  const c=e.caps; if(!c.hasUlt || c.ult<100 || !e.alive) return;
+  c.ult=0;
+  for(const o of entities){ if(!o.alive||o===e) continue;
+    const d=o.pos.distanceTo(e.pos);
+    if(d<260){ applyDamage(o, 85+e.dmg*1.4, e);
+      tmp.subVectors(o.pos,e.pos).normalize(); o.vel.addScaledVector(tmp, 340*(1-d/260)); } }
+  e.buffs.combat=6; e.buffs.overload=4;
+  spawnBurst(e.pos, 0xff8a1e, 44, 250);
+  if(e.isPlayer) feed(`<b class="k">★ НОВА!</b> радиальный взрыв`);
+  playBigChime();
+}
 
 function updateGlow(e){
   // ray length & brightness grow with level → visible from afar, but not screen-filling
-  const g = Math.min(1, (e.level-1)/9);
+  let g = Math.min(1, (e.level-1)/9) + (e.caps?e.caps.threatBonus:0)*0.3;
+  const cloaked = e.caps && e.caps.cloak>0;
+  if(cloaked) g *= 0.12;                          // cloak: nearly go dark
+  g=Math.min(1.4,g);
   const leader = getLeader();
-  const isLeader = (leader===e);
-  const len = 0.5 + g*1.9;                       // rays extend as you grow
+  const isLeader = (leader===e) && !cloaked;
+  const len = 0.5 + g*1.9;
   e.parts.rays.scale.setScalar(len);
-  const baseOp = 0.16 + g*0.34;
+  const baseOp = (0.16 + g*0.34) * (cloaked?0.4:1);
   const col = isLeader ? 0xff3b6b : e.color;
   for(const s of e.parts.rays.children){
     s.material.opacity = isLeader ? baseOp*(0.7+0.5*Math.sin(now()*6)) : baseOp;
     s.material.color.setHex(col);
   }
-  // small reactor glow
   e.parts.halo.scale.setScalar(0.8 + g*0.6);
-  e.parts.halo.material.opacity = 0.08 + g*0.14;
+  e.parts.halo.material.opacity = (0.08 + g*0.14) * (cloaked?0.3:1);
   e.parts.halo.material.color.setHex(col);
-  // outline: gold for the leader, otherwise friend/foe color
   if(e.parts.outline) e.parts.outline.material.color.setHex(isLeader?0xffcf3b:e.factionOutline);
 }
 
@@ -1086,28 +1190,49 @@ function updateGlow(e){
    WEAPONS / PROJECTILES
    ========================================================================= */
 const projPool = [];
+// laser-bolt visuals (shared, cheap): stretched oval, red-yellow glow
+const BOLT_GEO = new THREE.SphereGeometry(0.5, 8, 8);
+const BOLT_AXIS = new V(0,0,1);
+const BOLT_CORE_MAT = new THREE.MeshBasicMaterial({ color:0xfff0a0 });
+const BOLT_GLOW_MAT = new THREE.MeshBasicMaterial({ color:0xff5a1e, transparent:true,
+  opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false });
+function rotateDirYaw(dir, ang){
+  const c=Math.cos(ang), s=Math.sin(ang);
+  return new V(dir.x*c - dir.z*s, dir.y, dir.x*s + dir.z*c).normalize();
+}
+function spawnBolt(e, dir, dmg, size, pierce){
+  size=size||1;
+  let p=projPool.pop();
+  if(!p){
+    const g=new THREE.Group();
+    const core=new THREE.Mesh(BOLT_GEO, BOLT_CORE_MAT); core.scale.set(0.7,0.7,2.6);
+    const glow=new THREE.Mesh(BOLT_GEO, BOLT_GLOW_MAT); glow.scale.set(1.5,1.5,3.5);
+    g.add(glow); g.add(core); scene.add(g);
+    p={ mesh:g, core, glow };
+  }
+  const dn=dir.clone().normalize();
+  p.mesh.visible=true;
+  p.mesh.scale.setScalar(size);
+  p.mesh.quaternion.setFromUnitVectors(BOLT_AXIS, dn);
+  p.mesh.position.copy(e.pos).addScaledVector(dn, 7);
+  p.vel=dn.multiplyScalar(CONFIG.weapon.projSpeed*e.mods.projSpeedMul).addScaledVector(e.vel,0.4);
+  p.life=CONFIG.weapon.projLife;
+  p.owner=e; p.dmg=dmg; p.pierce=pierce||0; p.tint=0xffb43a; p._lastHit=null;
+  projectiles.push(p);
+}
 function fire(e, dir){
-  const mo=e.mods, ov=e.buffs.overload>0, cb=e.buffs.combat>0;
+  const mo=e.mods, ov=e.buffs.overload>0, cb=e.buffs.combat>0, c=e.caps;
   e.fireT = CONFIG.weapon.fireCd * mo.fireCdMul * (ov?0.6:1);
   e.energy -= CONFIG.weapon.cost * mo.costMul;
-  let p = projPool.pop();
-  if(!p){
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.6,6,6),
-        new THREE.MeshBasicMaterial({ color:0xffffff }));
-    const trail = new THREE.Mesh(new THREE.SphereGeometry(1.4,6,6),
-        new THREE.MeshBasicMaterial({ transparent:true, opacity:0.22,
-          blending:THREE.AdditiveBlending, depthWrite:false }));
-    m.add(trail); scene.add(m);
-    p = { mesh:m, trail };
-  }
-  p.mesh.visible=true;
-  p.mesh.material.color.set(e.color);
-  p.trail.material.color.set(e.color);
-  p.mesh.position.copy(e.pos).addScaledVector(dir, 7);
-  p.vel = dir.clone().multiplyScalar(CONFIG.weapon.projSpeed*mo.projSpeedMul).addScaledVector(e.vel,0.4);
-  p.life = CONFIG.weapon.projLife;
-  p.owner = e; p.dmg = e.dmg * (cb?1.6:1) * (ov?1.5:1);
-  projectiles.push(p);
+  let dmg = e.dmg * (cb?1.6:1) * (ov?1.5:1);
+  if(e.perks.berserk) dmg *= 1 + (1 - e.hull/e.maxHull)*0.85;   // more dmg the lower your HP
+  const pellets = c.spread||1;
+  if(pellets>1){
+    for(let k=0;k<pellets;k++){
+      const off=(k-(pellets-1)/2)*0.13;
+      spawnBolt(e, rotateDirYaw(dir,off), dmg, c.projSize, c.pierce);
+    }
+  } else spawnBolt(e, dir, dmg, c.projSize, c.pierce);
   if(e.isPlayer) playZap();
 }
 
@@ -1116,17 +1241,20 @@ function updateProjectiles(dt){
     const p=projectiles[i];
     p.mesh.position.addScaledVector(p.vel, dt);
     p.life-=dt;
-    let hit=false;
+    let dead=false;
     for(const e of entities){
-      if(!e.alive || e===p.owner) continue;
-      if(p.mesh.position.distanceToSquared(e.pos) < (e.radius+CONFIG.weapon.projR)**2){
-        applyDamage(e, p.dmg, p.owner); hit=true; break;
+      if(!e.alive || e===p.owner || e===p._lastHit) continue;
+      const rr=(e.radius+CONFIG.weapon.projR*(p.mesh.scale.x||1));
+      if(p.mesh.position.distanceToSquared(e.pos) < rr*rr){
+        applyDamage(e, p.dmg, p.owner);
+        spawnBurst(p.mesh.position, p.tint, 5, 26);
+        p._lastHit=e;
+        if(p.pierce>0) p.pierce--; else dead=true;
+        break;
       }
     }
-    // stop against environment (colliders match object shape)
-    if(!hit && obstacles.length && insideObstacles(p.mesh.position, 0)) hit=true;
-    if(hit || p.life<=0){
-      if(hit) spawnBurst(p.mesh.position, p.mesh.material.color.getHex(), 5, 26);
+    if(!dead && obstacles.length && insideObstacles(p.mesh.position, 0)) dead=true;
+    if(dead || p.life<=0){
       p.mesh.visible=false; projPool.push(p);
       projectiles.splice(i,1);
     }
@@ -1166,8 +1294,10 @@ function destroy(e, killer){
   }
 
   if(killer && killer.alive){
-    killer.hull=Math.min(killer.maxHull, killer.hull+CONFIG.vit.killHeal);
+    const vheal = killer.perks.vampire ? Math.round(killer.maxHull*0.35) : CONFIG.vit.killHeal;
+    killer.hull=Math.min(killer.maxHull, killer.hull+vheal);
     killer.kills++;
+    if(killer.caps.hasUlt) killer.caps.ult=Math.min(100, killer.caps.ult+25);
     feed(`<b>${killer.name}</b> <span class="k">уничтожил</span> <b>${e.name}</b>`);
     if(killer.isPlayer) killer.escore += Math.floor(e.escore*0.15);
   } else {
@@ -1406,6 +1536,7 @@ function magnet(list, dt, isLoot){
 function applyPickup(e, s){
   const xp = v=> e.escore += v * e.mods.xpMul;
   if(e.isPlayer){ (s.effect==="legendary"||s.effect==="accel") ? playBigChime() : playGoalChime(); }
+  if(e.caps.hasUlt) e.caps.ult=Math.min(100, e.caps.ult + (s.effect==="legendary"?45:s.effect==="accel"?20:4));
   switch(s.effect){
     case "xp":       xp(s.value); break;
     case "accel":    xp(s.value); break;
@@ -1666,11 +1797,20 @@ function updateHUD(){
   $("#clock").textContent = String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
 
   // active abilities
-  const b=p.buffs, pills=[];
+  const b=p.buffs, c=p.caps, pills=[];
+  if(c.cloak>0)    pills.push(`<div class="buff magnet">МАСКИРОВКА <b>${c.cloak.toFixed(0)}с</b></div>`);
   if(b.combat>0)   pills.push(`<div class="buff combat">УРОН ×1.6 <b>${b.combat.toFixed(0)}с</b></div>`);
   if(b.overload>0) pills.push(`<div class="buff overload">ПЕРЕГРУЗКА <b>${b.overload.toFixed(0)}с</b></div>`);
   if(b.magnet>0)   pills.push(`<div class="buff magnet">МАГНИТ <b>${b.magnet.toFixed(0)}с</b></div>`);
   if(b.overheat>0) pills.push(`<div class="buff overheat">ПЕРЕГРЕВ</div>`);
+  if(c.ability){
+    const rdy=c.abilityCd<=0;
+    pills.push(`<div class="buff ${rdy?'ready':'cd'}">E ${rdy?'ГОТОВ':c.abilityCd.toFixed(1)+'с'}</div>`);
+  }
+  if(c.hasUlt){
+    const full=c.ult>=100;
+    pills.push(`<div class="buff ${full?'ult':'cd'}">R ${full?'★ УЛЬТ ГОТОВ':Math.floor(c.ult)+'%'}</div>`);
+  }
   $("#buffs").innerHTML = pills.join("");
 }
 let feedTimer=0;
