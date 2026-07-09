@@ -203,9 +203,10 @@
   <div class="sub">Собери энергию · Стань лидером · Не будь целью</div>
   <button class="btn" id="playBtn">Играть</button>
   <div class="controls">
-    <b>W A S D</b> — тяга &nbsp;·&nbsp; <b>Мышь</b> — обзор/прицел &nbsp;·&nbsp; <b>ЛКМ</b> — огонь<br>
+    <b>W / S</b> — тяга вперёд/назад &nbsp;·&nbsp; <b>A / D</b> — крен (бочка) &nbsp;·&nbsp; <b>Мышь</b> — тангаж/рыскание &nbsp;·&nbsp; <b>ЛКМ</b> — огонь<br>
     <b>Space</b> — вверх &nbsp;·&nbsp; <b>Ctrl</b> — вниз &nbsp;·&nbsp; <b>Shift</b> — форсаж &nbsp;·&nbsp; <b>Q</b> — рывок (Dash)<br>
     <b>1 · 2 · 3</b> — выбор улучшения &nbsp;·&nbsp; <b>E</b> — способность &nbsp;·&nbsp; <b>R</b> — ультимейт &nbsp;·&nbsp; <b>M</b> — звук<br>
+    <span style="opacity:.6">Свободный полёт: мёртвых зон нет — можно крутить бочку, петлю и лететь вверх ногами.</span><br>
     <span style="opacity:.6">Чем больше энергии — тем ярче ты светишься и тем сильнее на тебя охотятся.</span><br>
     <span style="opacity:.85;font-size:10px">Сферы: ⚡энергия · 🔴урон · 🛡щит · 🔧ремонт · 🟣перегрузка · 🧲магнит · 🔺опыт · ★легенда</span><br>
     <span style="opacity:.6;font-size:10px">Каждые 15 уровней — выбор улучшения из трёх. Пролетай сквозь бирюзовые кольца — ускорение. Свой дрон — синий контур, враги — красный.</span>
@@ -239,14 +240,15 @@
    ========================================================================= */
 const CONFIG = {
   world:   { hx:1500, hy:1020, hz:1500 },   // half-extents (world = 3000 x 2040 x 3000) — 2× bigger
-  botCount: 9,
-  sphereCount: 156,
+  botCount: 15,
+  sphereCount: 234,
   repairCount: 10,
   matchSeconds: 15*60,
 
   flight: {
     accel: 185, maxSpeed: 90, boostMax: 165, damping: 1.9, // damping = per-second exp
-    boostDrain: 34, dashImpulse: 368, dashCost: 26, dashCd: 4, dashSpeedCap: 360, dashWindow: 0.5
+    boostDrain: 34, dashImpulse: 368, dashCost: 26, dashCd: 4, dashSpeedCap: 360, dashWindow: 0.5,
+    rollRate: 3.2   // rad/s — A/D barrel-roll speed
   },
   weapon: {
     projSpeed: 260, dmg: 11, fireCd: 0.13, cost: 6.5, projLife: 1.7, projR: 1.3
@@ -604,6 +606,42 @@ function buildEnvironment(){
       m.scale.y=0.6; cg.add(m);
     }
     cg.position.set(rand(-w.hx,w.hx), rand(-w.hy*0.4,w.hy*0.85), rand(-w.hz,w.hz));
+    scene.add(cg);
+  }
+
+  // ---- outer cloudscape: sprawling clouds BEYOND the arena walls, fading into haze ----
+  // makes the world read as endless instead of stopping at the boundary
+  const OUT_MIN = 1.15, OUT_MAX = 3.1;     // ring of clouds from just outside the wall to far away
+  for(let i=0;i<190;i++){
+    const cg=new THREE.Group();
+    const scaleUp = rand(1.4, 3.4);        // distant clouds are much bigger
+    const puffs = 3+Math.floor(Math.random()*4);
+    for(let p=0;p<puffs;p++){
+      const r=rand(30,62)*scaleUp;
+      const m=new THREE.Mesh(new THREE.SphereGeometry(r,7,5), cloudMat);
+      m.position.set(rand(-r,r)*1.7, rand(-r*0.28,r*0.28), rand(-r,r)*0.85);
+      m.scale.y=0.55; cg.add(m);
+    }
+    // place in a shell around the arena (never inside the play volume)
+    const ang = rand(0, Math.PI*2);
+    const dist = rand(w.hx*OUT_MIN, w.hx*OUT_MAX);
+    cg.position.set(Math.cos(ang)*dist, rand(-w.hy*1.1, w.hy*1.1), Math.sin(ang)*dist);
+    scene.add(cg);
+  }
+  // a soft cloud floor + ceiling far below/above, so up and down also feel endless
+  for(let i=0;i<70;i++){
+    const cg=new THREE.Group();
+    const scaleUp = rand(1.8, 3.8);
+    for(let p=0;p<3;p++){
+      const r=rand(40,80)*scaleUp;
+      const m=new THREE.Mesh(new THREE.SphereGeometry(r,7,5), cloudMat);
+      m.position.set(rand(-r,r)*1.7, rand(-r*0.25,r*0.25), rand(-r,r)*0.85);
+      m.scale.y=0.5; cg.add(m);
+    }
+    const below = Math.random()<0.62;
+    cg.position.set(rand(-w.hx*2.4, w.hx*2.4),
+                    below ? rand(-w.hy*2.4,-w.hy*1.12) : rand(w.hy*1.12, w.hy*2.0),
+                    rand(-w.hz*2.4, w.hz*2.4));
     scene.add(cg);
   }
 
@@ -979,7 +1017,7 @@ function defaultMods(){
     dashMul:1, boostMul:1, costMul:1, hullRegen:0, dmgResist:0 };
 }
 function defaultCaps(){
-  return { weaponMode:"normal", spread:1, pierce:0, projSize:1, explosive:false, homing:false,
+  return { weaponMode:"normal", spread:1, pierce:0, projSize:1, explosive:false,
     ability:null, abilityCd:0, abilityCdMax:0, cloak:0,
     hasUlt:false, ult:0, threatBonus:0 };
 }
@@ -1040,7 +1078,7 @@ function respawn(e, silent){
   e.spawnGuard = silent ? 0 : 2.6;         // brief invulnerability after dying
   clearEvolution(e);
   applyLevel(e);
-  if (e.isPlayer){ yaw=e.yaw; pitch=0; }
+  if (e.isPlayer){ yaw=e.yaw; pitch=0; mDX=mDY=0; resetOrientation(e.yaw); }
 }
 
 /* =========================================================================
@@ -1153,7 +1191,6 @@ const UPGRADES = [
   { id:"heavy",  cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Тяжёлое орудие", desc:"Редкие, но очень мощные выстрелы", apply:e=>{ e.caps.projSize=2.0; e.mods.dmgMul*=2.1; e.mods.fireCdMul*=1.7; } },
   { id:"rapid",  cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Скорострел", desc:"Шквальный огонь", apply:e=>{ e.mods.fireCdMul*=0.5; e.mods.dmgMul*=0.85; } },
   { id:"boom",   cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Разрывные снаряды", desc:"Взрыв по площади при попадании", apply:e=>{ e.caps.explosive=true; e.mods.dmgMul*=0.9; } },
-  { id:"homing", cat:"weapon", rarity:"rare", botOk:true, once:true, evo:"weapon", name:"Самонаведение", desc:"Пули подворачивают к врагам", apply:e=>{ e.caps.homing=true; e.mods.dmgMul*=0.9; } },
 
   // ---- RARE: active abilities (bound to E; player only) ----
   { id:"pulse", cat:"ability", rarity:"rare", once:true, evo:"shield", name:"Импульс (E)", desc:"Ударная волна: урон и отброс", apply:e=>{ e.caps.ability="pulse"; e.caps.abilityCdMax=6; } },
@@ -1244,6 +1281,21 @@ function chooseUpgrade(i){
    INPUT (PC: keyboard + pointer-lock mouse)
    ========================================================================= */
 const keys = {}; let mouseDown=false, yaw=0, pitch=0, pointerLocked=false;
+/* free-flight orientation: the drone carries its own frame, so it can barrel-roll
+   and fly inverted. mouse = pitch/yaw (local), A/D = roll. */
+const pOri = new THREE.Quaternion();
+const _qd = new THREE.Quaternion();
+const LOC_F = new V(0,0,1), LOC_U = new V(0,1,0);
+let mDX=0, mDY=0;                       // mouse deltas accumulated per frame
+function oriVectors(){
+  fwd.copy(LOC_F).applyQuaternion(pOri).normalize();
+  upv.copy(LOC_U).applyQuaternion(pOri).normalize();
+  rgt.crossVectors(fwd, upv).normalize();   // matches the old fwd × up convention
+}
+function resetOrientation(y){
+  pOri.setFromAxisAngle(WORLD_UP, y||0);
+  oriVectors();
+}
 const canvasEl = () => renderer.domElement;
 
 function initInput(){
@@ -1264,9 +1316,8 @@ function initInput(){
   addEventListener("mouseup",   ()=>{ mouseDown=false; });
   addEventListener("mousemove", e=>{
     if(!pointerLocked || state!=="play") return;
-    const s=0.0022;
-    yaw   -= e.movementX*s;
-    pitch  = clamp(pitch - e.movementY*s, -1.35, 1.35);
+    mDX += e.movementX;               // consumed by updatePlayer (no pitch clamp: full 6DOF)
+    mDY += e.movementY;
   });
   document.addEventListener("pointerlockchange", ()=>{
     pointerLocked = (document.pointerLockElement === canvasEl());
@@ -1290,21 +1341,33 @@ function lookVectors(y,p){
    ========================================================================= */
 function updatePlayer(dt){
   const p=player, F=CONFIG.flight;
-  p.yaw=yaw; p.pitch=pitch;
-  lookVectors(yaw,pitch);
 
-  // thrust vector from input
+  // ---- orientation: mouse pitches/yaws in the drone's own frame, A/D rolls ----
+  oriVectors();
+  const sens=0.0022;
+  if(mDX||mDY){
+    if(mDX){ _qd.setFromAxisAngle(upv, -mDX*sens); pOri.premultiply(_qd); }   // yaw
+    if(mDY){ oriVectors(); _qd.setFromAxisAngle(rgt, -mDY*sens); pOri.premultiply(_qd); } // pitch
+    mDX=0; mDY=0;
+  }
+  let rollIn=0;
+  if(keys.KeyA) rollIn += 1;
+  if(keys.KeyD) rollIn -= 1;
+  if(rollIn){ oriVectors(); _qd.setFromAxisAngle(fwd, rollIn*F.rollRate*dt); pOri.premultiply(_qd); }
+  pOri.normalize();
+  oriVectors();
+  p.ori = pOri;
+
+  // ---- thrust, entirely in the drone's local frame (so it works upside down) ----
   tmp.set(0,0,0);
   if(keys.KeyW) tmp.add(fwd);
   if(keys.KeyS) tmp.addScaledVector(fwd,-1);
-  if(keys.KeyD) tmp.add(rgt);
-  if(keys.KeyA) tmp.addScaledVector(rgt,-1);
-  if(keys.Space) tmp.add(WORLD_UP);
-  if(keys.ControlLeft||keys.ControlRight) tmp.addScaledVector(WORLD_UP,-1);
+  if(keys.Space) tmp.add(upv);
+  if(keys.ControlLeft||keys.ControlRight) tmp.addScaledVector(upv,-1);
 
   const m=p.mods, ov=p.buffs.overload>0, overheat=p.buffs.overheat>0;
   const boosting = (keys.ShiftLeft||keys.ShiftRight) && p.energy>1 && !overheat;
-  const speedMul = (ov?1.4:1) * (p.buffs.boost>0?1.55:1);
+  const speedMul = (ov?1.4:1) * (p.buffs.boost>0?2.1:1);
   if(tmp.lengthSq()>0){
     tmp.normalize().multiplyScalar(F.accel*m.accelMul*(boosting?1.9:1)*speedMul*dt);
     p.vel.add(tmp);
@@ -1323,7 +1386,7 @@ function updatePlayer(dt){
   let maxSp = (boosting?F.boostMax:p.maxSpeed)*speedMul;
   if(p.dashBurstT>0){ maxSp=Math.max(maxSp, F.dashSpeedCap*m.dashMul); p.dashBurstT-=dt; }
   applyPhysics(p, maxSp, dt);
-  updateEngineSound(p.vel.length()*0.7, boosting || p.dashBurstT>0);
+  updateEngineSound(p.vel.length()*0.7, boosting || p.dashBurstT>0, dt);
 
   // firing (straight ahead)
   p.fireT-=dt;
@@ -1335,8 +1398,8 @@ function updatePlayer(dt){
 }
 
 function updateCamera(dt){
-  lookVectors(player.yaw, player.pitch);
-  // chase position behind + above the drone
+  oriVectors();
+  // chase position behind + above the drone, in the drone's own frame
   tmp.copy(player.pos).addScaledVector(fwd,-63).addScaledVector(upv,18);
   camera.position.lerp(tmp, 1 - Math.exp(-10*dt));
   if(shakeT>0){
@@ -1344,6 +1407,8 @@ function updateCamera(dt){
     camera.position.x+=rand(-s,s); camera.position.y+=rand(-s,s); camera.position.z+=rand(-s,s);
     shakeT-=dt; if(shakeT<=0) shakeMag=0;
   }
+  // the camera's "up" follows the drone → rolling actually rolls the view
+  camera.up.lerp(upv, 1 - Math.exp(-12*dt)).normalize();
   tmp2.copy(player.pos).addScaledVector(fwd, 32);
   camera.lookAt(tmp2);
 }
@@ -1457,24 +1522,24 @@ function applyPhysics(e, maxSpd, dt){
   // collide with environment (colliders match each object's shape)
   if(obstacles.length) resolveObstacles(e);
 
-  // heading forward/right (player uses look dir, bots use aim)
-  if(e.isPlayer){ lookVectors(e.yaw,e.pitch); headF.copy(fwd); headR.copy(rgt); }
-  else {
+  if(e.isPlayer){
+    // free flight: the airframe IS the orientation quaternion (rolls, loops, inverted)
+    e.g.quaternion.copy(pOri);
+  } else {
     headF.copy(e.ai.aim.lengthSq()>0?e.ai.aim:tmp2.set(0,0,1)).normalize();
     headR.crossVectors(headF, WORLD_UP).normalize();
+    tmp.copy(e.pos).add(headF);
+    e.g.lookAt(tmp);
+    // bank the airframe from velocity in its local frame (nose-down + roll)
+    const vf = e.vel.dot(headF), vr = e.vel.dot(headR);
+    const tP = clamp(-vf*0.006, -0.45, 0.45);
+    const tR = clamp(-vr*0.011, -0.65, 0.65);
+    const k = Math.min(1, dt*7);
+    e.bankP += (tP - e.bankP)*k;
+    e.bankR += (tR - e.bankR)*k;
+    e.g.rotateX(e.bankP);
+    e.g.rotateZ(e.bankR);
   }
-  tmp.copy(e.pos).add(headF);
-  e.g.lookAt(tmp);
-
-  // bank the airframe from velocity in its local frame (nose-down + roll)
-  const vf = e.vel.dot(headF), vr = e.vel.dot(headR);
-  const tP = clamp(-vf*0.006, -0.45, 0.45);
-  const tR = clamp(-vr*0.011, -0.65, 0.65);
-  const k = Math.min(1, dt*7);
-  e.bankP += (tP - e.bankP)*k;
-  e.bankR += (tR - e.bankR)*k;
-  e.g.rotateX(e.bankP);
-  e.g.rotateZ(e.bankR);
 
   // spin rotors (fast → reads as a real quad); faster while thrusting
   const spinMul = 1 + Math.min(1, e.vel.length()/e.maxSpeed)*0.8;
@@ -1617,7 +1682,7 @@ function spawnBolt(e, dir, dmg, size, pierce){
   p.vel=dn.multiplyScalar(CONFIG.weapon.projSpeed*e.mods.projSpeedMul).addScaledVector(e.vel,0.4);
   p.life=CONFIG.weapon.projLife;
   p.owner=e; p.dmg=dmg; p.pierce=pierce||0; p.tint=0xffb43a; p._lastHit=null;
-  p.homing=!!e.caps.homing; p.explosive=!!e.caps.explosive;
+  p.explosive=!!e.caps.explosive;
   projectiles.push(p);
 }
 function fire(e, dir){
@@ -1641,19 +1706,6 @@ function fire(e, dir){
 function updateProjectiles(dt){
   for(let i=projectiles.length-1;i>=0;i--){
     const p=projectiles[i];
-    // homing: gently curve toward the nearest target
-    if(p.homing){
-      let tgt=null, td=320*320;
-      for(const e of entities){ if(!e.alive||e===p.owner) continue;
-        const d=p.mesh.position.distanceToSquared(e.pos); if(d<td){ td=d; tgt=e; } }
-      if(tgt){
-        const sp=p.vel.length();
-        _aim1.subVectors(tgt.pos,p.mesh.position).normalize().multiplyScalar(sp);
-        p.vel.lerp(_aim1, 0.10);
-        const sp2=p.vel.length()||1; p.vel.multiplyScalar(sp/sp2);
-        p.mesh.quaternion.setFromUnitVectors(BOLT_AXIS, _aim2.copy(p.vel).normalize());
-      }
-    }
     p.mesh.position.addScaledVector(p.vel, dt);
     p.life-=dt;
     let dead=false;
@@ -1696,10 +1748,10 @@ function updateProjectiles(dt){
 }
 
 function applyBoost(e){
-  e.buffs.boost = Math.max(e.buffs.boost||0, 3.2);
-  if(e.vel.lengthSq()>1) e.vel.multiplyScalar(1.35);      // instant kick through the ring
-  spawnBurst(e.pos, 0x33ffd0, 20, 150);
-  if(e.isPlayer){ playDash(); addShake(1.2,0.14); }
+  e.buffs.boost = Math.max(e.buffs.boost||0, 6.4);          // 2× duration
+  if(e.vel.lengthSq()>1) e.vel.multiplyScalar(1.7);         // 2× the speed kick
+  spawnBurst(e.pos, 0x33ffd0, 26, 200);
+  if(e.isPlayer){ playDash(); addShake(1.6,0.18); }
 }
 function updateRings(dt){
   for(const r of rings){
@@ -1872,15 +1924,16 @@ const SPH_GEO = {
 const RING_GEO = new THREE.TorusGeometry(1.65, 0.055, 8, 26);
 let legendaryActive = false;
 // full pickup roster — each unique in colour, shape, icon and effect (per GDD addendum)
+// weights sum to exactly 1.0 — XP spheres dominate, boosts are a treat, legendary is a rarity
 const SPH_TYPES = [
-  { key:"energy", geo:SPH_GEO.small,  c:0x2fdd5a, r:1.9, v:11,  w:0.34, spin:2.6, rings:0, pulse:0,    effect:"xp",        glyph:"bolt"      },
-  { key:"combat", geo:SPH_GEO.medium, c:0xff3b46, r:2.5, v:6,   w:0.13, spin:1.9, rings:0, pulse:0.05, effect:"combat",    glyph:"crosshair" },
-  { key:"shield", geo:SPH_GEO.large,  c:0x37b6ff, r:2.5, v:6,   w:0.13, spin:1.7, rings:0, pulse:0.05, effect:"shield",    glyph:"shield"    },
-  { key:"repair", geo:SPH_GEO.cube,   c:0xffd23b, r:2.4, v:6,   w:0.13, spin:1.6, rings:0, pulse:0.05, effect:"repair",    glyph:"wrench"    },
-  { key:"overld", geo:SPH_GEO.rare,   c:0xb14bff, r:3.4, v:10,  w:0.07, spin:1.1, rings:2, pulse:0.14, effect:"overload",  glyph:"core"      },
-  { key:"magnet", geo:SPH_GEO.medium, c:0xffffff, r:2.8, v:6,   w:0.07, spin:2.0, rings:1, pulse:0.10, effect:"magnet",    glyph:"magnet"    },
-  { key:"accel",  geo:SPH_GEO.large,  c:0xff9a2b, r:3.6, v:95,  w:0.035,spin:1.3, rings:1, pulse:0.12, effect:"accel",     glyph:"uparrow"   },
-  { key:"legend", geo:SPH_GEO.rare,   c:0xff4ba8, r:4.8, v:230, w:0.015,spin:0.8, rings:2, pulse:0.20, effect:"legendary", glyph:"star", rainbow:true }
+  { key:"energy", geo:SPH_GEO.small,  c:0x2fdd5a, r:2.85, v:12,  w:0.60,  spin:2.6, rings:0, pulse:0,    effect:"xp",        glyph:"bolt"      },
+  { key:"combat", geo:SPH_GEO.medium, c:0xff3b46, r:3.75, v:12,  w:0.075, spin:1.9, rings:0, pulse:0.05, effect:"combat",    glyph:"crosshair" },
+  { key:"shield", geo:SPH_GEO.large,  c:0x37b6ff, r:3.75, v:12,  w:0.075, spin:1.7, rings:0, pulse:0.05, effect:"shield",    glyph:"shield"    },
+  { key:"repair", geo:SPH_GEO.cube,   c:0xffd23b, r:3.6,  v:12,  w:0.075, spin:1.6, rings:0, pulse:0.05, effect:"repair",    glyph:"wrench"    },
+  { key:"magnet", geo:SPH_GEO.medium, c:0xffffff, r:4.2,  v:12,  w:0.05,  spin:2.0, rings:1, pulse:0.10, effect:"magnet",    glyph:"magnet"    },
+  { key:"overld", geo:SPH_GEO.rare,   c:0xb14bff, r:5.1,  v:18,  w:0.05,  spin:1.1, rings:2, pulse:0.14, effect:"overload",  glyph:"core"      },
+  { key:"accel",  geo:SPH_GEO.large,  c:0xff9a2b, r:5.4,  v:110, w:0.062, spin:1.3, rings:1, pulse:0.12, effect:"accel",     glyph:"uparrow"   },
+  { key:"legend", geo:SPH_GEO.rare,   c:0xff4ba8, r:7.2,  v:260, w:0.013, spin:0.8, rings:2, pulse:0.20, effect:"legendary", glyph:"star", rainbow:true }
 ];
 function pickType(){
   let r=Math.random(), acc=0;
@@ -1989,7 +2042,7 @@ function magnet(list, dt, isLoot){
         tmp.subVectors(best.pos,s.mesh.position).normalize();
         s.mesh.position.addScaledVector(tmp, pull*dt);
       }
-      if(dist<C.collectR+best.radius){
+      if(dist < C.collectR + best.radius + (s.baseR||1)){
         applyPickup(best, s);
         spawnBurst(s.mesh.position, s.tint, 5, 26);
         if(s.legendary){ legendaryActive=false; s.beacon.visible=false;
@@ -2163,18 +2216,20 @@ function initAudio(){
 }
 function setMasterVolume(v){ masterVolume=v; if(masterGain) masterGain.gain.setTargetAtTime(v,audioCtx.currentTime,0.05); }
 let _engPrevGain=0;
-function updateEngineSound(speed,dashing){
+function updateEngineSound(speed,dashing,dt){
   if(!audioReady || !engineOscs.length) return;
-  const cl=Math.min(speed,60), t=cl/60;             // 0..1 throttle
-  const base=(165 + t*250)*(dashing?1.14:1);        // prop tone rises with throttle
+  if(engineSurge>0) engineSurge = Math.max(0, engineSurge - (dt||0.016)*2.2);   // ~0.45s decay
+  const sg = engineSurge;                            // 1 → 0 right after a dash / ring
+  const cl=Math.min(speed,60), t=cl/60;              // 0..1 throttle
+  const base=(165 + t*250)*(dashing?1.14:1)*(1 + sg*0.55);   // props spin up hard
   const n=audioCtx.currentTime;
   const det=[1.0, 1.017, 0.984, 1.031];
   for(let i=0;i<engineOscs.length;i++)
-    engineOscs[i].frequency.setTargetAtTime(base*det[i], n, dashing?0.02:0.05);
-  const tg=0.0016 + t*0.011;                         // overall quiet
+    engineOscs[i].frequency.setTargetAtTime(base*det[i], n, (dashing||sg>0)?0.015:0.05);
+  const tg=(0.0016 + t*0.011) * (1 + sg*2.6);        // and get noticeably louder
   const dropping=tg<_engPrevGain; _engPrevGain=tg;
-  engineGain.gain.setTargetAtTime(tg, n, dropping?0.02:0.06);
-  engineFilter.frequency.setTargetAtTime(1500 + t*1900, n, 0.05);
+  engineGain.gain.setTargetAtTime(tg, n, dropping?0.03:0.02);
+  engineFilter.frequency.setTargetAtTime(1500 + t*1900 + sg*2600, n, 0.04);
   engineNoiseGain.gain.setTargetAtTime(0.0008 + t*0.010, n, 0.06);
   engineNoiseFilter.frequency.setTargetAtTime(1600 + t*900, n, 0.06);
 }
@@ -2208,23 +2263,9 @@ function playThud(impactSpeed){
   ns.connect(nf); nf.connect(ng); ng.connect(masterGain); ns.start(n); ns.stop(n+0.12);
 }
 let _lastZap=0;
-function playDash(){
-  if(!audioReady) return; const n=audioCtx.currentTime;
-  // whoosh: noise through a bandpass sweeping high→low
-  const bs=Math.floor(audioCtx.sampleRate*0.36), b=audioCtx.createBuffer(1,bs,audioCtx.sampleRate), d=b.getChannelData(0);
-  for(let i=0;i<bs;i++) d[i]=Math.random()*2-1;
-  const src=audioCtx.createBufferSource(); src.buffer=b;
-  const bp=audioCtx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=1.1;
-  bp.frequency.setValueAtTime(2700,n); bp.frequency.exponentialRampToValueAtTime(480,n+0.3);
-  const g=audioCtx.createGain(); g.gain.setValueAtTime(0.0001,n);
-  g.gain.linearRampToValueAtTime(0.5,n+0.03); g.gain.exponentialRampToValueAtTime(0.0001,n+0.34);
-  src.connect(bp); bp.connect(g); g.connect(masterGain); src.start(n); src.stop(n+0.37);
-  // low thump for the kick
-  const o=audioCtx.createOscillator(); o.type='sine';
-  o.frequency.setValueAtTime(190,n); o.frequency.exponentialRampToValueAtTime(58,n+0.18);
-  const og=audioCtx.createGain(); og.gain.setValueAtTime(0.38,n); og.gain.exponentialRampToValueAtTime(0.001,n+0.22);
-  o.connect(og); og.connect(masterGain); o.start(n); o.stop(n+0.24);
-}
+// dash/boost: no separate whoosh — the props themselves spin up hard, then settle
+let engineSurge = 0;
+function playDash(){ engineSurge = 1; }
 function playZap(){
   if(!audioReady) return; const n=audioCtx.currentTime; if(n-_lastZap<0.02) return; _lastZap=n;
   const o=audioCtx.createOscillator(); o.type='square';
@@ -2395,7 +2436,8 @@ function startMatch(){
   player = makeEntity(true, "ТЫ", 0x2ff0d6);
   entities.push(player);
   const pool=[...NAMES].sort(()=>Math.random()-0.5);
-  const palette=[0xff8a3b,0xb14bff,0xff5bd0,0xff3b6b,0x4ba3ff,0xffd23b,0xff6bff,0xa0ff3b,0x9b8bff];
+  const palette=[0xff8a3b,0xb14bff,0xff5bd0,0xff3b6b,0x4ba3ff,0xffd23b,0xff6bff,0xa0ff3b,0x9b8bff,
+                 0x00d4a0,0xff6f3c,0x7c5cff,0xffe14b,0x4be0ff,0xff4b8a];
   for(let i=0;i<CONFIG.botCount;i++){
     entities.push(makeEntity(false, pool[i]||("Bot"+i), palette[i%palette.length]));
   }
@@ -2406,7 +2448,9 @@ function startMatch(){
   $("#end").classList.add("hidden");
   $("#pause").classList.add("hidden");
   $("#hud").classList.remove("hidden");
-  yaw=player.yaw; pitch=0;
+  yaw=player.yaw; pitch=0; mDX=mDY=0;
+  resetOrientation(player.yaw);
+  camera.up.set(0,1,0);
   canvasEl().requestPointerLock();
 }
 
@@ -2439,7 +2483,7 @@ function loop(){
   if(state==="play"){
     timeLeft-=dt;
     if(player.alive) updatePlayer(dt);
-    else { updateCamera(dt); updateEngineSound(0,false); } // keep watching while dead
+    else { updateCamera(dt); updateEngineSound(0,false,dt); } // keep watching while dead
     for(const e of entities){ if(!e.isPlayer && e.alive) updateBot(e,dt); }
     updateProjectiles(dt);
     magnet(spheres, dt, false);
